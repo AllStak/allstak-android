@@ -90,9 +90,20 @@ afterEvaluate {
     }
 
     // Optional signing — only when a key is present, so dev/local publishes
-    // (e.g. publishToMavenLocal) work unsigned and release CI signs.
-    val signingKey = System.getenv("SIGNING_KEY") ?: (project.findProperty("signingKey") as String?)
-    val signingPassword = System.getenv("SIGNING_PASSWORD") ?: (project.findProperty("signingPassword") as String?)
+    // (e.g. publishToMavenLocal) work unsigned and release CI signs. Central
+    // rejects unsigned bundles, so release CI must supply a key.
+    //
+    // Key precedence (first non-null wins):
+    //   1. MAVEN_GPG_PRIVATE_KEY / MAVEN_GPG_PASSPHRASE  — the CI secret names,
+    //      shared with the Java SDK's release workflow.
+    //   2. SIGNING_KEY / SIGNING_PASSWORD                — existing env fallback.
+    //   3. signingKey / signingPassword Gradle properties.
+    val signingKey = System.getenv("MAVEN_GPG_PRIVATE_KEY")
+        ?: System.getenv("SIGNING_KEY")
+        ?: (project.findProperty("signingKey") as String?)
+    val signingPassword = System.getenv("MAVEN_GPG_PASSPHRASE")
+        ?: System.getenv("SIGNING_PASSWORD")
+        ?: (project.findProperty("signingPassword") as String?)
     if (signingKey != null) {
         extensions.configure<SigningExtension>("signing") {
             useInMemoryPgpKeys(signingKey, signingPassword)
