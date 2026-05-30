@@ -6,6 +6,7 @@ import sa.allstak.android.core.transport.HttpTransport
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicLong
 
 interface SessionStateStore {
     fun read(): Map<String, Any?>?
@@ -60,8 +61,11 @@ class SessionTracker(
     },
 ) {
     private val active = AtomicReference<Session?>()
+    private val recoveredSessions = AtomicLong(0)
 
     fun currentSessionId(): String? = active.get()?.id
+
+    fun recoveryCount(): Long = recoveredSessions.get()
 
     /** Start a new session if none is active. Idempotent for the active one. */
     fun start(userId: String?): Session {
@@ -182,6 +186,7 @@ class SessionTracker(
             locked["recoveredAt"] = now
             locked["recoveryLockUntil"] = 0
             store.write(locked)
+            recoveredSessions.incrementAndGet()
         } catch (t: Throwable) {
             locked["recoveryLockUntil"] = 0
             store.write(locked)

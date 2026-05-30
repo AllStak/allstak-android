@@ -5,9 +5,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
+import sa.allstak.android.AllStakDiagnostics
 import sa.allstak.android.AllStakOptions
 import sa.allstak.android.core.internal.AllStakVersion
 import sa.allstak.android.core.internal.SdkLogger
+import sa.allstak.android.core.internal.TraceIds
 import sa.allstak.android.core.masking.DataMasker
 import sa.allstak.android.core.model.Breadcrumb
 import sa.allstak.android.core.model.DatabaseQueryItem
@@ -24,6 +28,7 @@ import sa.allstak.android.core.spool.EventSpool
 import sa.allstak.android.core.transport.HttpTransport
 import sa.allstak.android.core.transport.SendResult
 import java.io.File
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -60,6 +65,7 @@ class AllStakClient internal constructor(
     private val httpBuffer = ArrayList<HttpRequestItem>()
     private val dbBuffer = ArrayList<DatabaseQueryItem>()
     private val bufferLock = ReentrantLock()
+    private val inFlightJobs = Collections.synchronizedSet(LinkedHashSet<Job>())
     private var flushJob: Job? = null
 
     val sessionTracker: SessionTracker? =
@@ -138,7 +144,7 @@ class AllStakClient internal constructor(
                 environment = options.environment,
                 release = options.release,
                 sessionId = sessionId,
-                traceId = requestContext?.traceId,
+                traceId = TraceIds.normalizeTraceId(requestContext?.traceId),
                 user = user,
                 metadata = meta.ifEmpty { null },
                 requestContext = requestContext,
@@ -247,9 +253,9 @@ class AllStakClient internal constructor(
                 level = level,
                 message = message,
                 service = service ?: options.serviceName,
-                traceId = traceId,
+                traceId = TraceIds.normalizeTraceId(traceId),
                 environment = options.environment,
-                spanId = spanId,
+                spanId = TraceIds.normalizeSpanId(spanId),
                 metadata = meta.ifEmpty { null },
                 release = options.release,
             )
@@ -269,6 +275,9 @@ class AllStakClient internal constructor(
         try {
             if (shutdown.get() || transport.isDisabled) return
             val sanitized = item.copy(
+                traceId = TraceIds.normalizeTraceId(item.traceId),
+                spanId = TraceIds.normalizeSpanId(item.spanId),
+                parentSpanId = TraceIds.normalizeSpanId(item.parentSpanId),
                 path = DataMasker.stripSensitiveQueryParams(item.path),
                 environment = item.environment ?: options.environment,
                 release = item.release ?: options.release,
@@ -293,6 +302,8 @@ class AllStakClient internal constructor(
                 service = item.service ?: options.serviceName,
                 environment = item.environment ?: options.environment,
                 release = item.release ?: options.release,
+                traceId = TraceIds.normalizeTraceId(item.traceId),
+                spanId = TraceIds.normalizeSpanId(item.spanId),
             )
             bufferLock.withLock { dbBuffer.add(enriched) }
         } catch (e: Throwable) {
@@ -326,10 +337,13 @@ class AllStakClient internal constructor(
             return
         }
         try {
+            val normalizedTraceId = TraceIds.normalizeTraceId(traceId) ?: TraceIds.newTraceId()
+            val normalizedSpanId = TraceIds.normalizeSpanId(spanId) ?: TraceIds.newSpanId()
+            val normalizedParentSpanId = TraceIds.normalizeSpanId(parentSpanId)
             val span = LinkedHashMap<String, Any?>()
-            span["traceId"] = traceId
-            span["spanId"] = spanId
-            span["parentSpanId"] = parentSpanId ?: ""
+            span["traceId"] = normalizedTraceId
+            span["spanId"] = normalizedSpanId
+            span["parentSpanId"] = normalizedParentSpanId ?: ""
             span["operation"] = operation
             span["description"] = description ?: ""
             span["status"] = status
@@ -420,7 +434,13 @@ class AllStakClient internal constructor(
     // =====================================================================
 
     fun flush() {
-        scope.launch { flushBlocking() }
+        val job = scope.launch { flushBlocking() }
+        trackInFlight(job)
+    }
+
+    fun flush(timeoutMs: Long): Boolean {
+        flushBlocking()
+        return awaitInFlight(timeoutMs)
     }
 
     private fun flushBlocking() {
@@ -450,8 +470,36 @@ class AllStakClient internal constructor(
             SdkLogger.debug("AllStak Android SDK shutting down")
             flushJob?.cancel()
             flushBlocking()
+            awaitInFlight(DEFAULT_SHUTDOWN_TIMEOUT_MS)
             sessionTracker?.end()
         }
+    }
+
+    fun getDiagnostics(): AllStakDiagnostics {
+        val stats = transport.stats()
+        val buffered = bufferLock.withLock {
+            logBuffer.size + httpBuffer.size + dbBuffer.size
+        }
+        return AllStakDiagnostics(
+            eventsCaptured = stats.eventsCaptured,
+            eventsSent = stats.eventsSent,
+            eventsFailed = stats.eventsFailed,
+            eventsDropped = stats.eventsDropped,
+            eventsPersisted = stats.eventsPersisted,
+            eventsReplayed = stats.eventsReplayed,
+            queueSize = buffered + (spool?.count() ?: 0),
+            retryAttempts = stats.retryAttempts,
+            rateLimitedCount = stats.rateLimitedCount,
+            compressedPayloads = stats.compressedPayloads,
+            uncompressedPayloads = stats.uncompressedPayloads,
+            compressionBytesSaved = stats.compressionBytesSaved,
+            sanitizerRedactionCount = null,
+            activeTraceCount = 0,
+            activeSpanCount = 0,
+            breadcrumbCount = Scopes.mergedForCapture().breadcrumbs.size,
+            sessionRecoveryCount = sessionTracker?.recoveryCount() ?: 0,
+            disabled = shutdown.get() || stats.disabled,
+        )
     }
 
     // =====================================================================
@@ -474,16 +522,20 @@ class AllStakClient internal constructor(
     }
 
     private fun sendOrSpoolAsync(path: String, payload: Map<String, Any?>) {
-        scope.launch { sendOrSpoolSync(path, payload) }
+        val job = scope.launch { sendOrSpoolSync(path, payload) }
+        trackInFlight(job)
     }
 
     private fun sendOrSpoolSync(path: String, payload: Map<String, Any?>): Boolean {
         val result = transport.sendWithResult(path, payload)
         val s = spool
         if (result == SendResult.TRANSIENT && s != null && s.isAvailable) {
-            runCatching {
-                s.persist(path, sa.allstak.android.core.internal.Json.encodeObject(payload))
-            }
+            val persisted = runCatching {
+                s.tryPersist(path, sa.allstak.android.core.internal.Json.encodeObject(payload))
+            }.getOrDefault(false)
+            if (persisted) transport.recordPersisted() else transport.recordDropped()
+        } else if (result == SendResult.TRANSIENT) {
+            transport.recordDropped()
         }
         return result.isAccepted
     }
@@ -491,7 +543,7 @@ class AllStakClient internal constructor(
     private fun drainSpoolAsync() {
         val s = spool ?: return
         if (!s.isAvailable) return
-        scope.launch {
+        val job = scope.launch {
             try {
                 val handles = s.load()
                 if (handles.isEmpty()) return@launch
@@ -505,6 +557,7 @@ class AllStakClient internal constructor(
                 SdkLogger.debug("Spool drain failed: ${e.message}")
             }
         }
+        trackInFlight(job)
     }
 
     /** Public so the connectivity watcher can replay on reconnect. */
@@ -661,8 +714,30 @@ class AllStakClient internal constructor(
     private fun isValidLogLevel(level: String?): Boolean =
         level != null && level in setOf("debug", "info", "warn", "error", "fatal")
 
+    private fun trackInFlight(job: Job) {
+        inFlightJobs.add(job)
+        job.invokeOnCompletion { inFlightJobs.remove(job) }
+    }
+
+    private fun awaitInFlight(timeoutMs: Long): Boolean {
+        val jobs = synchronized(inFlightJobs) { inFlightJobs.toList() }
+        if (jobs.isEmpty()) return true
+        return try {
+            runBlocking {
+                withTimeoutOrNull(timeoutMs.coerceAtLeast(1L)) {
+                    jobs.forEach { job -> job.join() }
+                    true
+                } == true
+            }
+        } catch (t: Throwable) {
+            SdkLogger.debug("Timed out waiting for transport jobs: ${t.message}")
+            false
+        }
+    }
+
     companion object {
         private const val REDACTED = "[REDACTED]"
+        private const val DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000L
         const val PATH_ERRORS = "/ingest/v1/errors"
         const val PATH_LOGS = "/ingest/v1/logs"
         const val PATH_HTTP_REQUESTS = "/ingest/v1/http-requests"

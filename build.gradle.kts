@@ -8,7 +8,7 @@ plugins {
 }
 
 // Shared coordinates for every published module.
-extra["allstakVersion"] = "0.1.0"
+extra["allstakVersion"] = "0.2.0"
 extra["allstakGroup"] = "sa.allstak"
 
 // Shared POM / SCM metadata reused by each module's publication.
@@ -17,5 +17,5 @@ extra["allstakProjectUrl"] = "https://allstak.sa"
 
 allprojects {
     group = "sa.allstak"
-    version = "0.1.0"
+    version = "0.2.0"
 }

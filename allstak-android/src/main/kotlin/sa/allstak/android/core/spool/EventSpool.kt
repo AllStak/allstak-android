@@ -39,14 +39,20 @@ class EventSpool(
     class Handle(val file: File, val path: String, val body: String)
 
     fun persist(path: String, wireJson: String) {
-        if (!isAvailable) return
+        tryPersist(path, wireJson)
+    }
+
+    fun tryPersist(path: String, wireJson: String): Boolean {
+        if (!isAvailable) return false
         try {
             pruneIfNeeded()
             val name = "${seq.incrementAndGet()}-${sanitize(path)}.json"
             val f = File(dir, name)
             f.writeText(path + "\n" + wireJson, Charsets.UTF_8)
+            return true
         } catch (t: Throwable) {
             SdkLogger.debug("Spool persist skipped for $path: ${t.message}")
+            return false
         }
     }
 
@@ -83,6 +89,8 @@ class EventSpool(
         } catch (ignored: Throwable) {
         }
     }
+
+    fun count(): Int = load().size
 
     private fun pruneIfNeeded() {
         val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }

@@ -24,10 +24,10 @@ ANRs, HTTP, logs, traces, breadcrumbs, and release-health sessions.
 
 ```kotlin
 dependencies {
-    implementation("sa.allstak:allstak-android:0.1.0")
+    implementation("sa.allstak:allstak-android:0.2.0")
     // Optional integrations:
-    implementation("sa.allstak:allstak-android-okhttp:0.1.0")
-    implementation("sa.allstak:allstak-android-timber:0.1.0")
+    implementation("sa.allstak:allstak-android-okhttp:0.2.0")
+    implementation("sa.allstak:allstak-android-timber:0.2.0")
 }
 ```
 
@@ -157,11 +157,33 @@ AllStak.addBreadcrumb("ui", "Tapped checkout")
 AllStak.setUser(id = "user-42")
 AllStak.setTag("plan", "pro")
 AllStak.captureHeartbeat("nightly-sync", "ok", durationMs = 4200)
+AllStak.captureSpan(
+    traceId = traceId,
+    spanId = spanId,
+    parentSpanId = parentSpanId,
+    operation = "db.sqlite.query",
+    description = "SELECT * FROM users WHERE id = ?",
+    durationMs = 42,
+)
+AllStak.flush()
+val flushed = AllStak.flush(timeoutMs = 5_000)
+AllStak.close()
+val closed = AllStak.close(timeoutMs = 5_000)
 
 AllStakDatabase.trace("SELECT * FROM users WHERE id = ?", "main.db") {
     dao.findById(id)
 }
 ```
+
+`captureSpan` is the low-level API for custom completed spans when automatic
+OkHttp/SQLite instrumentation is not the right hook. IDs are normalized to W3C
+widths: 32 lowercase hex characters for `traceId`, 16 for `spanId` and
+`parentSpanId`.
+
+`AllStak.getDiagnostics()` returns privacy-safe counters only: captured/sent/
+failed/dropped/persisted/replayed events, queue size, retry/rate-limit counts,
+compression counters, breadcrumb count, and session recovery count. It never
+includes event payloads, headers, breadcrumbs, user data, or secrets.
 
 ## Privacy
 

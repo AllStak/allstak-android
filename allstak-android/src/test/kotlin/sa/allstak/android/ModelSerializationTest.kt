@@ -37,14 +37,14 @@ class ModelSerializationTest {
             breadcrumbs = null,
             platform = "android",
             sdkName = "allstak-android",
-            sdkVersion = "0.1.0",
+            sdkVersion = "0.2.0",
             dist = null,
             frames = listOf(Frame(filename = "Main.kt", function = "main", lineno = 12, inApp = true, platform = "android")),
         )
         val json = Json.encodeObject(event.toMap())
         assertTrue(json.contains("\"exceptionClass\":\"java.lang.IllegalStateException\""))
         assertTrue(json.contains("\"sdkName\":\"allstak-android\""))
-        assertTrue(json.contains("\"sdkVersion\":\"0.1.0\""))
+        assertTrue(json.contains("\"sdkVersion\":\"0.2.0\""))
         assertTrue(json.contains("\"platform\":\"android\""))
         assertTrue(json.contains("\"user\":{\"id\":\"user-7\"}"))
         assertTrue(json.contains("\"frames\":[{\"filename\":\"Main.kt\""))

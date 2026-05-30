@@ -167,13 +167,21 @@ object AllStak {
     /** Shut down the SDK: flush, end the session, and detach instrumentation. */
     @JvmStatic
     fun close() {
-        val c = CLIENT.getAndSet(null) ?: return
+        close(5_000)
+    }
+
+    /** Shut down the SDK with a hard timeout for pending transport work. */
+    @JvmStatic
+    fun close(timeoutMs: Long): Boolean {
+        val c = CLIENT.getAndSet(null) ?: return true
         try {
             anrWatchdog?.stop()
             logcat?.stop()
             connectivity?.unregister()
             UncaughtExceptionHandler.uninstall()
+            val flushed = c.flush(timeoutMs)
             c.shutdown()
+            return flushed
         } finally {
             anrWatchdog = null
             logcat = null
@@ -216,6 +224,40 @@ object AllStak {
     @JvmStatic
     fun captureDbQuery(item: DatabaseQueryItem) {
         CLIENT.get()?.captureDbQuery(item)
+    }
+
+    @JvmStatic
+    @JvmOverloads
+    fun captureSpan(
+        traceId: String,
+        spanId: String,
+        parentSpanId: String? = null,
+        operation: String,
+        description: String? = null,
+        status: String = "ok",
+        durationMs: Long,
+        startTimeMillis: Long,
+        endTimeMillis: Long,
+        service: String? = null,
+        tags: Map<String, String>? = null,
+        data: Map<String, Any?>? = null,
+        preSampled: Boolean = false,
+    ) {
+        CLIENT.get()?.captureSpan(
+            traceId = traceId,
+            spanId = spanId,
+            parentSpanId = parentSpanId,
+            operation = operation,
+            description = description,
+            status = status,
+            durationMs = durationMs,
+            startTimeMillis = startTimeMillis,
+            endTimeMillis = endTimeMillis,
+            service = service,
+            tags = tags,
+            data = data,
+            preSampled = preSampled,
+        )
     }
 
     @JvmStatic
@@ -267,6 +309,14 @@ object AllStak {
     fun flush() {
         CLIENT.get()?.flush()
     }
+
+    @JvmStatic
+    fun flush(timeoutMs: Long): Boolean =
+        CLIENT.get()?.flush(timeoutMs) ?: true
+
+    @JvmStatic
+    fun getDiagnostics(): AllStakDiagnostics =
+        CLIENT.get()?.getDiagnostics() ?: AllStakDiagnostics()
 
     /** Build a [RequestContext] for manual inbound-request correlation. */
     @JvmStatic

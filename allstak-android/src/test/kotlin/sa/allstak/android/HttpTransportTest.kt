@@ -8,7 +8,9 @@ import sa.allstak.android.core.transport.HttpSendOutcome
 import sa.allstak.android.core.transport.HttpSender
 import sa.allstak.android.core.transport.HttpTransport
 import sa.allstak.android.core.transport.SendResult
+import java.io.ByteArrayInputStream
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.zip.GZIPInputStream
 
 /** Records what was sent without touching a real socket. */
 private class RecordingSender(
@@ -18,11 +20,19 @@ private class RecordingSender(
     var lastUrl: String? = null
     var lastApiKey: String? = null
     var lastBody: String? = null
+    var lastBodyBytes: ByteArray = byteArrayOf()
+    var lastContentEncoding: String? = null
 
     override fun post(url: String, apiKey: String, body: String): HttpSendOutcome {
+        return post(url, apiKey, body.toByteArray(Charsets.UTF_8), null)
+    }
+
+    override fun post(url: String, apiKey: String, body: ByteArray, contentEncoding: String?): HttpSendOutcome {
         lastUrl = url
         lastApiKey = apiKey
-        lastBody = body
+        lastBodyBytes = body
+        lastContentEncoding = contentEncoding
+        lastBody = if (contentEncoding == null) body.toString(Charsets.UTF_8) else null
         val i = calls.getAndIncrement()
         return outcomes[minOf(i, outcomes.size - 1)]
     }
@@ -37,6 +47,12 @@ class HttpTransportTest {
         val result = transport.sendWithResult("/ingest/v1/errors", linkedMapOf("a" to 1))
         assertEquals(SendResult.ACCEPTED, result)
         assertEquals(1, sender.calls.get())
+        val stats = transport.stats()
+        assertEquals(1L, stats.eventsCaptured)
+        assertEquals(1L, stats.eventsSent)
+        assertEquals(0L, stats.eventsFailed)
+        assertEquals(1L, stats.uncompressedPayloads)
+        assertEquals(0L, stats.compressedPayloads)
     }
 
     @Test
@@ -51,6 +67,22 @@ class HttpTransportTest {
     }
 
     @Test
+    fun `large payload is gzipped and counted`() {
+        val sender = RecordingSender(listOf(HttpSendOutcome(202)))
+        val transport = HttpTransport("https://api.allstak.sa", "key", sender, sleeper = {})
+        val message = "x".repeat(8_000)
+        val result = transport.sendWithResult("/ingest/v1/logs", linkedMapOf("message" to message))
+        assertEquals(SendResult.ACCEPTED, result)
+        assertEquals("gzip", sender.lastContentEncoding)
+        val decoded = GZIPInputStream(ByteArrayInputStream(sender.lastBodyBytes)).bufferedReader().use { it.readText() }
+        assertTrue(decoded.contains(message))
+        val stats = transport.stats()
+        assertEquals(1L, stats.compressedPayloads)
+        assertEquals(0L, stats.uncompressedPayloads)
+        assertTrue(stats.compressionBytesSaved > 0)
+    }
+
+    @Test
     fun `401 disables the sdk and is permanent`() {
         val sender = RecordingSender(listOf(HttpSendOutcome(401)))
         val transport = HttpTransport("https://api.allstak.sa", "bad", sender, sleeper = {})
@@ -62,6 +94,10 @@ class HttpTransportTest {
         val r2 = transport.sendWithResult("/ingest/v1/errors", linkedMapOf("a" to 1))
         assertEquals(SendResult.PERMANENT, r2)
         assertEquals(before, sender.calls.get())
+        val stats = transport.stats()
+        assertEquals(2L, stats.eventsCaptured)
+        assertEquals(1L, stats.eventsFailed)
+        assertEquals(2L, stats.eventsDropped)
     }
 
     @Test
@@ -92,6 +128,10 @@ class HttpTransportTest {
         val result = transport.sendWithResult("/ingest/v1/errors", linkedMapOf("a" to 1))
         assertEquals(SendResult.TRANSIENT, result)
         assertEquals(5, sender.calls.get())
+        val stats = transport.stats()
+        assertEquals(1L, stats.eventsFailed)
+        assertEquals(0L, stats.eventsDropped)
+        assertEquals(4L, stats.retryAttempts)
     }
 
     @Test
@@ -110,5 +150,24 @@ class HttpTransportTest {
         val body = """{"already":"scrubbed"}"""
         transport.sendRawJson("/ingest/v1/errors", body)
         assertEquals(body, sender.lastBody)
+        val stats = transport.stats()
+        assertEquals(0L, stats.eventsCaptured)
+        assertEquals(1L, stats.eventsSent)
+        assertEquals(1L, stats.eventsReplayed)
+    }
+
+    @Test
+    fun `429 tracks rate limit and retry counters`() {
+        val sender = RecordingSender(
+            listOf(HttpSendOutcome(429, retryAfter = "1"), HttpSendOutcome(202)),
+        )
+        val transport = HttpTransport("https://api.allstak.sa", "key", sender, sleeper = {})
+        val result = transport.sendWithResult("/ingest/v1/errors", linkedMapOf("a" to 1))
+        assertEquals(SendResult.ACCEPTED, result)
+        assertEquals(2, sender.calls.get())
+        val stats = transport.stats()
+        assertEquals(1L, stats.rateLimitedCount)
+        assertEquals(1L, stats.retryAttempts)
+        assertEquals(1L, stats.eventsSent)
     }
 }

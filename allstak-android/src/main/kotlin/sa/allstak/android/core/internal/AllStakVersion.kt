@@ -7,7 +7,7 @@ package sa.allstak.android.core.internal
  */
 object AllStakVersion {
     const val SDK_NAME: String = "allstak-android"
-    const val SDK_VERSION: String = "0.1.0"
+    const val SDK_VERSION: String = "0.2.0"
 
     /** The `platform` field stamped on error/session payloads. */
     const val PLATFORM: String = "android"

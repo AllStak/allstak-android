@@ -6,7 +6,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import sa.allstak.android.core.AllStakClient
 import sa.allstak.android.core.internal.SdkLogger
-import java.util.UUID
+import sa.allstak.android.core.internal.TraceIds
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -66,8 +66,8 @@ internal class LifecycleInstrumentation(
         // Begin a screen span for this Activity's visible time.
         val key = activity.toKey()
         screenSpans[key] = ScreenSpan(
-            traceId = UUID.randomUUID().toString().replace("-", ""),
-            spanId = UUID.randomUUID().toString().replace("-", "").substring(0, 16),
+            traceId = TraceIds.newTraceId(),
+            spanId = TraceIds.newSpanId(),
             startUptimeMs = SystemClock.uptimeMillis(),
             startEpochMs = System.currentTimeMillis(),
             screen = activity.localClassName,
@@ -149,8 +149,8 @@ internal class LifecycleInstrumentation(
             // alive a long time before init (warm path).
             val capped = durationMs.coerceAtMost(60_000)
             client.captureSpan(
-                traceId = UUID.randomUUID().toString().replace("-", ""),
-                spanId = UUID.randomUUID().toString().replace("-", "").substring(0, 16),
+                traceId = TraceIds.newTraceId(),
+                spanId = TraceIds.newSpanId(),
                 parentSpanId = null,
                 operation = "app.start",
                 description = "Cold start to $firstScreen",

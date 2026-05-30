@@ -9,9 +9,11 @@ import sa.allstak.android.core.model.ErrorEvent
 import sa.allstak.android.core.transport.HttpSendOutcome
 import sa.allstak.android.core.transport.HttpSender
 import sa.allstak.android.core.transport.HttpTransport
+import java.io.ByteArrayInputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.zip.GZIPInputStream
 
 private class BeforeSendRecordingSender : HttpSender {
     private val latch = CountDownLatch(1)
@@ -19,6 +21,17 @@ private class BeforeSendRecordingSender : HttpSender {
 
     override fun post(url: String, apiKey: String, body: String): HttpSendOutcome {
         this.body.set(body)
+        latch.countDown()
+        return HttpSendOutcome(202)
+    }
+
+    override fun post(url: String, apiKey: String, body: ByteArray, contentEncoding: String?): HttpSendOutcome {
+        val decoded = if (contentEncoding.equals("gzip", ignoreCase = true)) {
+            GZIPInputStream(ByteArrayInputStream(body)).use { it.readBytes().toString(Charsets.UTF_8) }
+        } else {
+            body.toString(Charsets.UTF_8)
+        }
+        this.body.set(decoded)
         latch.countDown()
         return HttpSendOutcome(202)
     }

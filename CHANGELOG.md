@@ -21,6 +21,12 @@ All notable changes to the AllStak Android SDK are documented here.
   wraps a `SupportSQLiteOpenHelper.Factory` so every framework query is timed and
   shipped automatically — no per-call wrappers. `AllStakDatabase.trace { }` is
   still available for ad-hoc timing.
+- **Production reliability APIs.** `AllStak.captureSpan(...)`,
+  `AllStak.flush(timeoutMs)`, and `AllStak.close(timeoutMs)` are public,
+  backward-compatible additions for custom tracing and timeout-bounded shutdown.
+- **Live certification probe.** The SDK now has an env-gated live certification
+  test proving error arrival, W3C trace linkage, redaction, persistent offline
+  replay, and abnormal session recovery against a disposable AllStak backend.
 
 ### Changed
 
@@ -28,6 +34,8 @@ All notable changes to the AllStak Android SDK are documented here.
   with descriptive categories (`navigation`/`app.lifecycle` and
   `default`/`connectivity`) instead of collapsing to the `default` bucket, so the
   dashboard groups them correctly.
+- The package/runtime version is aligned to `0.2.0` for the reliability API
+  additions and certification evidence.
 
 ### Packaging
 

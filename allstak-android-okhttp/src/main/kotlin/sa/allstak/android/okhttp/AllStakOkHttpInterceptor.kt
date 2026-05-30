@@ -3,6 +3,7 @@ package sa.allstak.android.okhttp
 import okhttp3.Interceptor
 import okhttp3.Response
 import sa.allstak.android.AllStak
+import sa.allstak.android.core.internal.TraceIds
 import sa.allstak.android.core.model.HttpRequestItem
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -41,15 +42,15 @@ class AllStakOkHttpInterceptor : Interceptor {
         val host = request.url.host
         val path = request.url.encodedPath
 
-        val traceId = newTraceId()
-        val spanId = newSpanId()
+        val traceId = TraceIds.newTraceId()
+        val spanId = TraceIds.newSpanId()
 
         var enriched = request
         if (client != null && client.shouldPropagateTrace(url)) {
             enriched = request.newBuilder()
                 .header(HEADER_TRACE_ID, traceId)
                 .header(HEADER_SPAN_ID, spanId)
-                .header(HEADER_TRACEPARENT, traceparent(traceId, spanId, client.traceparentSampledFlag()))
+                .header(HEADER_TRACEPARENT, TraceIds.traceparent(traceId, spanId, client.traceparentSampledFlag()))
                 .build()
         }
 
@@ -125,21 +126,6 @@ class AllStakOkHttpInterceptor : Interceptor {
         status >= 400 -> "warn"
         else -> "info"
     }
-
-    private fun traceparent(traceId: String, spanId: String, flag: String): String {
-        val hex32 = pad(traceId.replace("-", ""), 32)
-        val hex16 = pad(spanId.replace("-", ""), 16)
-        return "00-$hex32-$hex16-$flag"
-    }
-
-    private fun pad(hex: String, width: Int): String = when {
-        hex.length == width -> hex
-        hex.length > width -> hex.substring(0, width)
-        else -> hex.padEnd(width, '0')
-    }
-
-    private fun newTraceId(): String = UUID.randomUUID().toString().replace("-", "")
-    private fun newSpanId(): String = UUID.randomUUID().toString().replace("-", "").substring(0, 16)
 
     // API-21-safe ISO-8601 UTC timestamp (java.time requires API 26).
     private fun isoTimestamp(epochMillis: Long): String =
