@@ -12,6 +12,9 @@ plugins {
     // (not `apply false`) on the root so the `nmcpAggregation` extension and the
     // `publishAggregationToCentralPortal` task are configured here.
     id("com.gradleup.nmcp.aggregation") version "1.5.0"
+    // Producer plugin — applied to each module below so the aggregation can
+    // collect their `release` publications. Without it nmcp finds no files.
+    id("com.gradleup.nmcp") version "1.5.0" apply false
 }
 
 // Shared coordinates for every published module.
@@ -25,6 +28,13 @@ extra["allstakProjectUrl"] = "https://allstak.sa"
 allprojects {
     group = "sa.allstak"
     version = "0.2.0"
+}
+
+// Apply the nmcp producer plugin to every module so its `release` publication
+// feeds the root `nmcpAggregation` bundle (settings.gradle.kts includes only
+// the three publishable library modules).
+subprojects {
+    apply(plugin = "com.gradleup.nmcp")
 }
 
 // ── Sonatype Central Portal aggregation ────────────────────────────────────
