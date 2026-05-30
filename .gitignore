@@ -1,0 +1,20 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+captures/
+.cxx/
+
+# Local environment — must not be committed (machine-specific SDK path)
+local.properties
+
+# OS
+.DS_Store
+
+# Keystores / secrets
+*.jks
+*.keystore
